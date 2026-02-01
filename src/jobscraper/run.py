@@ -4,7 +4,10 @@ import argparse
 from pathlib import Path
 
 from .db import JobDB
+import os
+
 from .sources.tanitjobs import TanitjobsConfig, scrape_tanitjobs
+from .tanitjobs_watch import fetch_first_page_jobs
 from .sources.keejob import KeejobConfig, scrape_keejob
 from .sources.wttj import WTTJConfig, scrape_wttj
 from .sources.weworkremotely import WWRConfig, scrape_weworkremotely
@@ -49,20 +52,51 @@ def main() -> int:
     db = JobDB(Path("data") / "jobs.sqlite3")
 
     if args.source == "tanitjobs":
-        cfg = TanitjobsConfig()
-        if args.tanitjobs_url:
-            cfg.search_url = args.tanitjobs_url
-        if args.browser_channel:
-            cfg.browser_channel = args.browser_channel
-        if args.user_data_dir:
-            cfg.user_data_dir = args.user_data_dir
+        # Prefer CDP-based scrape (Cloudflare-friendly) if available.
+        # Set CDP_URL env var for dashboard runs.
+        cdp_url = os.getenv("CDP_URL", "http://172.25.192.1:9223").strip() or None
+        url = args.tanitjobs_url or "https://www.tanitjobs.com/jobs/"
 
-        jobs = scrape_tanitjobs(cfg=cfg, headed=args.headed)
+        page_jobs, reason = fetch_first_page_jobs(
+            url,
+            user_data_dir=None,
+            headless=True,
+            timeout_ms=30_000,
+            cdp_url=cdp_url,
+            max_jobs=80,
+        )
+
+        jobs = []
+        from .models import Job
+
+        for jid, title in page_jobs:
+            jobs.append(
+                Job(
+                    source="tanitjobs",
+                    external_id=str(jid),
+                    title=title,
+                    company="",
+                    location="",
+                    url=f"https://www.tanitjobs.com/job/{jid}/",
+                    posted_at=None,
+                )
+            )
+
         new_jobs = db.upsert_jobs(jobs)
+        relevant_new = [j for j in new_jobs if is_relevant(j.title)]
 
-        print(f"tanitjobs: scraped={len(jobs)} new={len(new_jobs)}")
-        for j in new_jobs[:20]:
-            print(f"NEW: {j.title} {j.url}")
+        print(f"tanitjobs: scraped={len(jobs)} new={len(new_jobs)} relevant_new={len(relevant_new)}")
+        for j in relevant_new[:20]:
+            print(f"NEW: {j.title} | {j.url}")
+
+        if args.sheet_id:
+            scfg = SheetsConfig(sheet_id=args.sheet_id, tab=args.sheet_tab, account=args.sheet_account)
+            ensure_jobs_header(scfg)
+            append_jobs(scfg, relevant_new, date_label="tanitjobs")
+
+        if args.notify and relevant_new:
+            lines = [f"{j.title}\n{j.url}" for j in relevant_new]
+            send_many(title=f"tanitjobs: {len(relevant_new)} new relevant", lines=lines, tags=["briefcase"], priority=4)
 
     if args.source == "keejob":
         cfg = KeejobConfig(today_only=True)
