@@ -23,16 +23,24 @@ def _run_gog(args: List[str]) -> None:
 
 
 def ensure_jobs_header(cfg: SheetsConfig) -> None:
-    # Dedicated Jobs tab. Header always at row 1.
-    # Workflow columns are on the right so you can track applications.
+    # Legacy sheet schema (kept for compatibility with existing Jobs tab data):
+    # A: source
+    # B: labels
+    # C: title
+    # D: company
+    # E: location
+    # F: date_added
+    # G: url
+    # H: decision
+    # I: notes
     values = [[
-        "date_added",
         "source",
+        "labels",
         "title",
         "company",
         "location",
+        "date_added",
         "url",
-        "labels",
         "decision",
         "notes",
     ]]
@@ -61,8 +69,7 @@ def append_jobs(cfg: SheetsConfig, jobs: Sequence[Job], date_label: str) -> None
     for j in jobs:
         labels = ",".join(match_labels(j.title))
         # Default decision to NEW so the dropdown starts in a consistent state.
-        # This is especially useful for the Jobs_Today inbox tab.
-        rows.append([date_label, j.source, j.title, j.company, j.location, j.url, labels, "NEW", ""]) 
+        rows.append([j.source, labels, j.title, j.company, j.location, date_label, j.url, "NEW", ""]) 
 
     _run_gog(
         [
