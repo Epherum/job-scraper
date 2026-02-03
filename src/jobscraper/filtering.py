@@ -5,6 +5,83 @@ from dataclasses import dataclass
 from typing import Iterable, List
 
 
+# If a title matches any of these, we discard it even if it matches TECH/AI/SALES.
+# Keep this list conservative; it is easy to over-filter.
+NEGATIVE_PATTERNS: list[str] = [
+    # Seniority / leadership (you marked these as not a fit)
+    r"\bexecutive\b",
+    r"\bvp\b",
+    r"\bvice\s+president\b",
+    r"\bdirector\b",
+    r"\bdirecteur\b",
+    r"\bdirectrice\b",
+    r"\bhead\s+of\b",
+    r"\bc\-level\b",
+    r"\bchief\b",
+    r"\bprincipal\b",
+    r"\bstaff\b",
+    r"\bsenior\b",
+    r"\bsr\b",
+    r"\bconfirmé\b",
+    r"\bconfirmée\b",
+
+    # Non-software engineering / trades you flagged (FR/EN)
+    r"électricit",
+    r"electri(c|que)",
+    r"\bcfo\b",
+    r"\bcfa\b",
+    r"automatisme",
+    r"maintenance\b",
+    r"\bindustri(el|elle|els|elles)\b",
+    r"manufactur",
+    r"assemblage",
+    r"contrôleur\s+qualité",
+    r"controleur\s+qualite",
+    r"\bqualité\b",
+    r"\bqualite\b",
+    r"génie\s+civil",
+    r"genie\s+civil",
+    r"revit",
+    r"coffrage",
+    r"ferraillage",
+
+    # QA/testing (non-target for you)
+    r"\bqa\b",
+    r"test(\b|eur|euse)",
+    r"fonctionnel(le)?",
+
+    # Roles you marked not a fit
+    r"comptab",
+    r"finance\b",
+    r"ressources\s+humaines",
+    r"\brh\b",
+    r"marketing\b",
+    r"chef\s+de\s+produit",
+    r"product\s+manager",
+    r"video\s+editor",
+    r"monteur\s+vid(é|e)o",
+
+    # Retail / service / logistics (examples you gave)
+    r"\bcaissier\b",
+    r"\bcaisse\b",
+    r"\bcashier\b",
+    r"\blivreur\b",
+    r"\bcoursier\b",
+    r"\bchauffeur\b",
+    r"\bpréparateur\b",
+    r"\bpreparateur\b",
+    r"\bvendeur\b",
+    r"\bvendeuse\b",
+
+    # Call-center floor / coaching (you marked not a fit)
+    r"assistance\s+plateau",
+    r"\bplateau\b",
+    r"\bcoach(s)?\b",
+]
+
+_NEGATIVE_RE = re.compile("|".join(f"(?:{p})" for p in NEGATIVE_PATTERNS), flags=re.IGNORECASE)
+
+
 @dataclass(frozen=True)
 class KeywordRule:
     label: str
@@ -144,5 +221,20 @@ def match_labels(text: str, rules: Iterable[KeywordRule] = BROAD_RULES) -> List[
     return out
 
 
+def is_blocked(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+
+    # If the "title" is actually a URL, ignore it. This happens when a source fails
+    # to extract the title and we accidentally store the href.
+    if t.startswith("http://") or t.startswith("https://"):
+        return True
+
+    return bool(_NEGATIVE_RE.search(t))
+
+
 def is_relevant(text: str, rules: Iterable[KeywordRule] = BROAD_RULES) -> bool:
+    if is_blocked(text):
+        return False
     return len(match_labels(text, rules=rules)) > 0
