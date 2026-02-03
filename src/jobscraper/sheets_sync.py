@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import List, Sequence
 
 from .models import Job
-from .filtering import match_labels
+from .filtering import decision_for_title, match_labels
 
 
 @dataclass
@@ -68,8 +68,8 @@ def append_jobs(cfg: SheetsConfig, jobs: Sequence[Job], date_label: str) -> None
     rows = []
     for j in jobs:
         labels = ",".join(match_labels(j.title))
-        # Default decision to NEW so the dropdown starts in a consistent state.
-        rows.append([j.source, labels, j.title, j.company, j.location, date_label, j.url, "NEW", ""]) 
+        decision = decision_for_title(j.title)
+        rows.append([j.source, labels, j.title, j.company, j.location, date_label, j.url, decision, ""]) 
 
     _run_gog(
         [

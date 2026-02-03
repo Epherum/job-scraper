@@ -5,10 +5,15 @@ from dataclasses import dataclass
 from typing import Iterable, List
 
 
-# If a title matches any of these, we discard it even if it matches TECH/AI/SALES.
-# Keep this list conservative; it is easy to over-filter.
-NEGATIVE_PATTERNS: list[str] = [
-    # Seniority / leadership (you marked these as not a fit)
+# Scraper behavior:
+# - Titles that match DELETE_PATTERNS are discarded even if they match TECH/AI/SALES.
+# - Titles that match TOO_SENIOR_PATTERNS are kept, but the default decision in Sheets becomes OVERSENIOR.
+
+DECISION_NEW = "NEW"
+DECISION_TOO_SENIOR = "OVERSENIOR"
+
+
+TOO_SENIOR_PATTERNS: list[str] = [
     r"\bexecutive\b",
     r"\bvp\b",
     r"\bvice\s+president\b",
@@ -20,10 +25,21 @@ NEGATIVE_PATTERNS: list[str] = [
     r"\bchief\b",
     r"\bprincipal\b",
     r"\bstaff\b",
+    r"\blead\b",
     r"\bsenior\b",
     r"\bsr\b",
     r"\bconfirmé\b",
     r"\bconfirmée\b",
+]
+
+
+# Keep this list conservative; it is easy to over-filter.
+DELETE_PATTERNS: list[str] = [
+    # Sales-heavy pipeline roles
+    r"sales\s+development\s+representative",
+    r"business\s+development\s+representative",
+    r"\bsdr\b",
+    r"\bbdr\b",
 
     # Non-software engineering / trades you flagged (FR/EN)
     r"électricit",
@@ -45,12 +61,12 @@ NEGATIVE_PATTERNS: list[str] = [
     r"coffrage",
     r"ferraillage",
 
-    # QA/testing (non-target for you)
+    # QA/testing
     r"\bqa\b",
     r"test(\b|eur|euse)",
     r"fonctionnel(le)?",
 
-    # Roles you marked not a fit
+    # Accounting/HR/marketing/product/video
     r"comptab",
     r"finance\b",
     r"ressources\s+humaines",
@@ -61,7 +77,7 @@ NEGATIVE_PATTERNS: list[str] = [
     r"video\s+editor",
     r"monteur\s+vid(é|e)o",
 
-    # Retail / service / logistics (examples you gave)
+    # Retail / service / logistics
     r"\bcaissier\b",
     r"\bcaisse\b",
     r"\bcashier\b",
@@ -72,14 +88,10 @@ NEGATIVE_PATTERNS: list[str] = [
     r"\bpreparateur\b",
     r"\bvendeur\b",
     r"\bvendeuse\b",
-
-    # Call-center floor / coaching (you marked not a fit)
-    r"assistance\s+plateau",
-    r"\bplateau\b",
-    r"\bcoach(s)?\b",
 ]
 
-_NEGATIVE_RE = re.compile("|".join(f"(?:{p})" for p in NEGATIVE_PATTERNS), flags=re.IGNORECASE)
+_RE_TOO_SENIOR = re.compile("|".join(f"(?:{p})" for p in TOO_SENIOR_PATTERNS), flags=re.IGNORECASE)
+_RE_DELETE = re.compile("|".join(f"(?:{p})" for p in DELETE_PATTERNS), flags=re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -221,12 +233,22 @@ def match_labels(text: str, rules: Iterable[KeywordRule] = BROAD_RULES) -> List[
     return out
 
 
+def is_too_senior(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_RE_TOO_SENIOR.search(t))
+
+
 def is_blocked(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
+    return bool(_RE_DELETE.search(t))
 
-    return bool(_NEGATIVE_RE.search(t))
+
+def decision_for_title(title: str) -> str:
+    return DECISION_TOO_SENIOR if is_too_senior(title) else DECISION_NEW
 
 
 def is_relevant(text: str, rules: Iterable[KeywordRule] = BROAD_RULES) -> bool:
