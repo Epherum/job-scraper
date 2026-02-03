@@ -54,9 +54,77 @@ def fetch_rows(cfg: TransferConfig) -> list[list[str]]:
     return norm
 
 
+def _fetch_preview(cfg: TransferConfig, tab: str, n_rows: int = 3) -> list[list[str]]:
+    out = _run_gog(
+        [
+            "gog",
+            "sheets",
+            "get",
+            cfg.sheet_id,
+            f"{tab}!A1:I{n_rows}",
+            "--account",
+            cfg.account,
+            "--json",
+        ]
+    )
+    data = json.loads(out)
+    return data.get("values") or []
+
+
+def _looks_like_source(v: str) -> bool:
+    return (v or "").strip().lower() in {
+        "keejob",
+        "welcometothejungle",
+        "weworkremotely",
+        "remoteok",
+        "remotive",
+        "tanitjobs",
+        "aneti",
+        "rss",
+        "test",
+    }
+
+
+def _to_tab_expects_legacy_order(cfg: TransferConfig) -> bool:
+    """Detect whether the destination tab (Jobs) uses the legacy column order.
+
+    Current source tab (Jobs_Today) schema is:
+      [date_added, source, title, company, location, url, labels, decision, notes]
+
+    Older Jobs tab in your sheet historically used:
+      [source, labels, title, company, location, date_added, url, decision, notes]
+
+    We infer this from the first data row, since the header row may be stale.
+    """
+
+    preview = _fetch_preview(cfg, cfg.to_tab, n_rows=3)
+    if len(preview) < 2:
+        return False
+
+    first = preview[1]
+    first = first + [""] * (9 - len(first))
+
+    # If the first cell of the first data row looks like a source name,
+    # then the tab is in legacy order.
+    return _looks_like_source(first[0])
+
+
+def _reorder_for_legacy(rows: list[list[str]]) -> list[list[str]]:
+    out: list[list[str]] = []
+    for r in rows:
+        r = r + [""] * (9 - len(r))
+        date_added, source, title, company, location, url, labels, decision, notes = r[:9]
+        out.append([source, labels, title, company, location, date_added, url, decision, notes])
+    return out
+
+
 def append_rows(cfg: TransferConfig, rows: list[list[str]]) -> int:
     if not rows:
         return 0
+
+    # Best effort compatibility: if Jobs is in legacy order, map rows before append.
+    if _to_tab_expects_legacy_order(cfg):
+        rows = _reorder_for_legacy(rows)
 
     _run_gog(
         [
