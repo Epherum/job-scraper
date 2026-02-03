@@ -26,6 +26,7 @@ TOO_SENIOR_PATTERNS: list[str] = [
     r"\bprincipal\b",
     r"\bstaff\b",
     r"\blead\b",
+    r"\bmanager\b",
     r"\bsenior\b",
     r"\bsr\b",
     r"\bconfirmé\b",
