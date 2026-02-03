@@ -279,7 +279,7 @@ Start-Process $Chrome -ArgumentList @(
 
     # One unified cycle. Tiers are just implementation difficulty.
     # Tier-1 sources are server-side; Tier-2 are CDP-based (Windows Chrome).
-    sources = ["keejob", "welcometothejungle", "weworkremotely", "remoteok", "remotive", "tanitjobs", "aneti", "linkedin"]
+    sources = ["keejob", "welcometothejungle", "weworkremotely", "remoteok", "remotive", "tanitjobs", "aneti"]
 
     cdp = cfg.cdp_url
 
@@ -303,6 +303,55 @@ Start-Process $Chrome -ArgumentList @(
         )
         for s in sources
     ]
+
+    # LinkedIn: render as separate dashboard rows (TN/FR/GR) instead of one combined row.
+    # We infer the URL -> label from geoId.
+    def _parse_linkedin_urls() -> dict[str, str]:
+        raw = (os.getenv("LINKEDIN_URLS") or "").strip()
+        if raw:
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+        else:
+            single = (os.getenv("LINKEDIN_URL") or "").strip()
+            parts = [single] if single else []
+
+        out: dict[str, str] = {}
+        for u in parts:
+            if "geoId=102134353" in u:
+                out.setdefault("TN", u)
+            elif "geoId=105015875" in u:
+                out.setdefault("FR", u)
+            elif "geoId=101282230" in u:
+                # User asked for GR label (Germany).
+                out.setdefault("GR", u)
+            else:
+                out.setdefault("LI", u)
+        return out
+
+    li = _parse_linkedin_urls()
+    for label in ["TN", "FR", "GR", "LI"]:
+        if label not in li:
+            continue
+        tasks.append(
+            Task(
+                name=f"linkedin {label}",
+                kind="run",
+                interval_s=interval_min * 60,
+                cmd=[
+                    sys.executable,
+                    "-m",
+                    "jobscraper.run",
+                    "--source",
+                    "linkedin",
+                    "--once",
+                    "--linkedin-url",
+                    li[label],
+                    "--sheet-id",
+                    sheet_id,
+                    "--sheet-tab",
+                    jobs_today_tab,
+                ],
+            )
+        )
 
     # We'll export SQLite -> CSV and sync it to "All jobs" after each cycle.
     export_cmd = [sys.executable, "-c", "from jobscraper.export_all_jobs import export_all_jobs_csv; export_all_jobs_csv()"]
