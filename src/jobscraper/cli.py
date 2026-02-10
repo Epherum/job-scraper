@@ -476,17 +476,30 @@ Start-Process $Chrome -ArgumentList @(
     def _add_result(name: str, exit_code: Optional[int], summary: str) -> None:
         state.last_results.append((name, "" if exit_code is None else str(exit_code), summary))
 
-    def _update_live(live: Optional[Live] = None) -> None:
+    last_ui_update_ts: float = 0.0
+
+    def _update_live(live: Optional[Live] = None, *, force: bool = False) -> None:
+        """Update the Rich Live UI.
+
+        Debounced to reduce terminal flicker. Set force=True for major phase transitions.
+        """
+        nonlocal last_ui_update_ts
         if not is_tty or live is None:
             return
-        live.update(_build_dashboard(dashboard_rows, time.time(), state))
+        now = time.time()
+        if not force and (now - last_ui_update_ts) < 0.4:
+            return
+        last_ui_update_ts = now
+        live.update(_build_dashboard(dashboard_rows, now, state))
 
     def _plain_print(line: str) -> None:
         if is_tty:
             return
         console.print(line)
 
-    live_ctx = Live(_build_dashboard(dashboard_rows, time.time(), state), refresh_per_second=4, console=console) if is_tty else None
+    # NOTE: Rich Live can flicker if we push updates too frequently (especially in some terminals).
+    # Keep refresh rate modest and debounce manual update calls.
+    live_ctx = Live(_build_dashboard(dashboard_rows, time.time(), state), refresh_per_second=2, console=console) if is_tty else None
 
     # Loop
     if live_ctx:
@@ -746,7 +759,9 @@ Start-Process $Chrome -ArgumentList @(
             sleep_s = max(1, interval_min * 60 - elapsed)
             for sec in range(int(sleep_s)):
                 state.phase = f"sleeping ({_fmt_secs(int(sleep_s - sec))})"
-                _update_live(live_ctx)
+                # Avoid flicker: update UI at most every ~5 seconds during long sleeps.
+                if sec % 5 == 0:
+                    _update_live(live_ctx)
                 time.sleep(1)
     finally:
         if live_ctx:
