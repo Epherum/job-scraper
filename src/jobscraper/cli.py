@@ -1136,6 +1136,134 @@ def push_all_jobs(
     console.print(f"uploaded_rows={uploaded} tab={tab}")
 
 
+@app.command(name="score-open-tabs")
+def score_open_tabs(
+    sheet_id: str = typer.Option("", help="Google Sheet ID (or set SHEET_ID in data/config.env)."),
+    sheet_tab: str = typer.Option("", help="Sheet tab to update (default Jobs_Today)."),
+    max_tabs: int = typer.Option(25, help="How many open tabs to consider (most recent first)."),
+    model: str = typer.Option("", help="Ollama model (default qwen2.5:7b-instruct)."),
+    dry_run: bool = typer.Option(False, help="Do not update the sheet, just print what would be updated."),
+) -> None:
+    """Manual workflow helper.
+
+    Reads the currently open URLs in the CDP Chrome session (tabs you opened yourself).
+    For each URL:
+    - Extracts text directly from the already-open tab (no navigation)
+    - Writes it into job_text_cache
+    - If the URL exists unscored in Jobs_Today, scores it and updates columns I:J
+
+    Works for any site as long as the job URL matches the sheet row URL.
+    """
+
+    import os
+
+    from .config import load_config
+    from .cdp_open_tabs import extract_text_from_open_tabs
+    from .job_text_cache_db import JobTextCacheDB
+    from .llm_score import DEFAULT_MODEL, score_job_with_ollama
+    from .sheets_sync import SheetsConfig, _get_sheet_rows, update_job_scores
+    from .url_canon import canonicalize_url
+
+    cfg = load_config()
+    sheet_id = sheet_id or cfg.sheet_id
+    sheet_tab = sheet_tab or cfg.jobs_today_tab
+
+    if not sheet_id:
+        console.print("sheet_id is required")
+        raise typer.Exit(2)
+
+    cdp_url = (os.getenv("CDP_URL") or cfg.cdp_url or "").strip()
+    if not cdp_url:
+        console.print("CDP_URL not set")
+        raise typer.Exit(2)
+
+    model = model.strip() or (os.getenv("LLM_MODEL") or "").strip() or DEFAULT_MODEL
+
+    # Read sheet and index unscored rows by URL.
+    sheet_cfg = SheetsConfig(sheet_id=sheet_id, tab=sheet_tab, account=cfg.sheet_account)
+    rows = _get_sheet_rows(sheet_cfg)
+    url_to_meta: dict[str, tuple[str, str, str]] = {}
+    for r in (rows or [])[1:]:
+        if len(r) < 7:
+            continue
+        url = (r[6] or "").strip()
+        score = (r[8] or "").strip() if len(r) > 8 else ""
+        if not url or score:
+            continue
+        title = (r[2] or "").strip() if len(r) > 2 else ""
+        company = (r[3] or "").strip() if len(r) > 3 else ""
+        location = (r[4] or "").strip() if len(r) > 4 else ""
+        url_to_meta[url] = (title, company, location)
+
+    if not url_to_meta:
+        console.print("No unscored rows found in sheet.")
+        raise typer.Exit(0)
+
+    open_tabs = extract_text_from_open_tabs(cdp_url=cdp_url, max_tabs=max_tabs)
+    if not open_tabs:
+        console.print("No usable open tabs found in CDP session.")
+        raise typer.Exit(1)
+
+    # Cache extracted text.
+    cache_db = JobTextCacheDB(Path("data") / "jobs.sqlite3")
+    touched = 0
+    blocked = 0
+
+    for t in open_tabs:
+        if t.url not in url_to_meta:
+            continue
+        touched += 1
+        if t.status != "ok":
+            blocked += 1
+        cache_db.upsert(
+            url_canon=canonicalize_url(t.url),
+            url=t.url,
+            text=t.text or "",
+            method="cdp-open-tab",
+            status=t.status,
+            error=t.error,
+        )
+
+    cache_db.close()
+
+    console.print(f"open_tabs={len(open_tabs)} matched_unscored={touched} cached_blocked={blocked}")
+
+    # Score the ones that have ok cached text.
+    cache_db = JobTextCacheDB(Path("data") / "jobs.sqlite3")
+    updates = []
+    for url, (title, company, location) in url_to_meta.items():
+        row = cache_db.get(canonicalize_url(url))
+        if not row or row.get("status") != "ok":
+            continue
+        text = (row.get("text") or "").strip()
+        if len(text) < 200:
+            continue
+        llm = score_job_with_ollama(
+            title=title,
+            company=company,
+            location=location,
+            url=url,
+            page_text=text,
+            model=model,
+        )
+        updates.append({"url": url, "score": llm.score, "reasons": (llm.reasons[0] if llm.reasons else "")[:180]})
+
+    cache_db.close()
+
+    if not updates:
+        console.print("No scorable open-tab URLs (maybe still blocked).")
+        raise typer.Exit(0)
+
+    if dry_run:
+        console.print(f"dry_run updates={len(updates)}")
+        for u in updates[:10]:
+            console.print(f"- {u['score']} | {u['url']}")
+        raise typer.Exit(0)
+
+    n = update_job_scores(sheet_cfg, updates)
+    console.print(f"updated_rows={n} scored={len(updates)}")
+
+
 @app.command()
 def run_all(sheet_id: str = typer.Argument(...), notify: bool = True) -> None:
     """Run Tier-1 sources once."""
