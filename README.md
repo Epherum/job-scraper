@@ -1,4 +1,4 @@
-# job-scraper
+# jobforme
 
 Personal job scraper + lightweight workflow helper.
 
