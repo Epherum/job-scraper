@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+import re
 
 
 # Common tracking params we want to ignore for cache key stability.
@@ -41,6 +42,14 @@ def canonicalize_url(url: str) -> str:
     scheme = (p.scheme or "").lower()
     netloc = (p.netloc or "").lower()
     path = p.path or ""
+
+    # Site-specific normalization.
+    # Tanitjobs sometimes uses a short URL (/job/<id>/) and later redirects to a long slug URL
+    # (/job/<id>/<slug>/). We canonicalize both to /job/<id> so sheet URLs match open tabs.
+    if "tanitjobs.com" in netloc:
+        m = re.match(r"^/job/(?P<id>\d+)(?:/.*)?$", path)
+        if m:
+            path = f"/job/{m.group('id')}"
 
     if path != "/":
         path = path.rstrip("/")
