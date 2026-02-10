@@ -487,6 +487,7 @@ Start-Process $Chrome -ArgumentList @(
             live.update(_build_table(dashboard_rows, time.time()))
 
             # LLM scoring from cached text.
+            # Run up to 3 passes if there are still unscored rows.
             score_task.last_exit = None
             score_task.last_summary = "scoring"
             live.update(_build_table(dashboard_rows, time.time()))
@@ -501,16 +502,38 @@ Start-Process $Chrome -ArgumentList @(
                     model = (os.getenv("LLM_MODEL") or "").strip() or DEFAULT_MODEL
                     max_jobs = int((os.getenv("TEXT_FETCH_MAX_JOBS") or "50").strip() or "50")
 
-                    summary = score_unscored_sheet_rows_from_cache(
-                        db_path=Path("data") / "jobs.sqlite3",
-                        model=model,
-                        sheet_cfg=SheetsConfig(sheet_id=sheet_id, tab=jobs_today_tab, account=cfg.sheet_account),
-                        max_jobs=max_jobs,
-                        concurrency=2,
-                        extract_missing=False,
-                    )
+                    total_scored = 0
+                    total_updated = 0
+                    total_errors = 0
+                    last_missing = None
+
+                    for p in range(1, 4):
+                        summary = score_unscored_sheet_rows_from_cache(
+                            db_path=Path("data") / "jobs.sqlite3",
+                            model=model,
+                            sheet_cfg=SheetsConfig(sheet_id=sheet_id, tab=jobs_today_tab, account=cfg.sheet_account),
+                            max_jobs=max_jobs,
+                            concurrency=2,
+                            extract_missing=False,
+                        )
+
+                        total_scored += int(summary.get("scored", 0) or 0)
+                        total_updated += int(summary.get("updated_rows", 0) or 0)
+                        total_errors += int(summary.get("errors", 0) or 0)
+
+                        missing = int(summary.get("missing", 0) or 0)
+                        score_task.last_summary = f"pass={p}/3 scored={summary['scored']} updated={summary['updated_rows']} missing={missing}"
+                        live.update(_build_table(dashboard_rows, time.time()))
+
+                        # Stop early if no missing remain, or if missing is not changing.
+                        if missing == 0:
+                            break
+                        if last_missing is not None and missing == last_missing:
+                            break
+                        last_missing = missing
+
                     score_task.last_exit = 0
-                    score_task.last_summary = f"scored={summary['scored']} updated={summary['updated_rows']} missing={summary['missing']}"
+                    score_task.last_summary = f"passes<=3 scored={total_scored} updated={total_updated} errors={total_errors}"
                 except Exception as e:
                     score_task.last_exit = 1
                     score_task.last_summary = f"error={e}"[:160]
