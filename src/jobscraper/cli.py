@@ -21,10 +21,23 @@ from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 from rich.text import Text
 from rich.console import Group
+from rich.prompt import Prompt
 
 
 app = typer.Typer(add_completion=False)
 console = Console()
+
+
+def _self_cmd() -> str:
+    # Best-effort: the current CLI entrypoint (jobformer/jobscraper).
+    return (sys.argv[0] or "jobformer").strip() or "jobformer"
+
+
+def _run_self(args: list[str]) -> int:
+    """Run this CLI as a subprocess (keeps the start menu simple)."""
+    cmd = [_self_cmd(), *args]
+    proc = subprocess.run(cmd)
+    return int(proc.returncode or 0)
 
 
 DEFAULT_SHEET_ID = ""  # pass explicitly
@@ -390,6 +403,46 @@ def _refresh_dashboard_layout(layout: Layout, tasks: List[Task], now_ts: float, 
     footer.append(f"Tasks: {len(tasks)}", style="dim")
 
     layout["footer"].update(Panel(Align.left(footer), padding=(0, 1)))
+
+
+@app.command()
+def start() -> None:
+    """Interactive menu for common workflows.
+
+    This is a convenience wrapper so you don't have to memorize subcommands.
+    """
+
+    menu = [
+        ("Dashboard (continuous)", ["dashboard"]),
+        ("Dashboard (once)", ["dashboard", "--once"]),
+        ("Score open tabs (manual Cloudflare workflow)", ["score-open-tabs"]),
+        ("Extract text cache", ["extract-text", "--max-jobs", "200"]),
+        ("Score cached", ["score-cached", "--max-jobs", "200", "--concurrency", "1"]),
+        ("Score today (recent)", ["score-today", "--since-hours", "6"]),
+        ("Transfer Jobs_Today → Jobs", ["transfer-today"]),
+        ("Smoke test", ["smoke"]),
+        ("Doctor", ["doctor"]),
+        ("Push All jobs sheet", ["push-all-jobs"]),
+        ("Quit", []),
+    ]
+
+    table = Table(title="jobformer start", show_header=True, header_style="bold")
+    table.add_column("#", width=3, justify="right")
+    table.add_column("Action")
+    for i, (label, _) in enumerate(menu, start=1):
+        table.add_row(str(i), label)
+
+    console.print(table)
+
+    choice = Prompt.ask("Select", choices=[str(i) for i in range(1, len(menu) + 1)], default="1")
+    idx = int(choice) - 1
+    _, args = menu[idx]
+
+    if not args:
+        return
+
+    console.print(f"Running: [bold]{_self_cmd()} {' '.join(args)}[/bold]")
+    raise typer.Exit(_run_self(args))
 
 
 @app.command()
