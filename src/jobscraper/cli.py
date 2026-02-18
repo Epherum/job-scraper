@@ -639,19 +639,22 @@ Start-Process $Chrome -ArgumentList @(
 
         out: dict[str, str] = {}
         for u in parts:
-            if "geoId=102134353" in u:
+            ul = u.lower()
+            if "geoid=102134353" in ul:
                 out.setdefault("TN", u)
-            elif "geoId=105015875" in u:
+            elif "geoid=105015875" in ul:
                 out.setdefault("FR", u)
-            elif "geoId=101282230" in u:
+            elif "geoid=101282230" in ul:
                 # User asked for GR label (Germany).
                 out.setdefault("GR", u)
+            elif "location=middle%20east" in ul or "region=me" in ul:
+                out.setdefault("ME", u)
             else:
                 out.setdefault("LI", u)
         return out
 
     li = _parse_linkedin_urls()
-    for label in ["TN", "FR", "GR", "LI"]:
+    for label in ["TN", "FR", "GR", "ME", "LI"]:
         if label not in li:
             continue
         tasks.append(

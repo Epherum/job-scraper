@@ -270,14 +270,17 @@ def main() -> int:
             ]
 
         def _label_for_url(u: str) -> str:
-            # Best-effort labels for the known geoIds we use.
-            if "geoId=102134353" in u:
+            # Best-effort labels for the known geoIds/locations we use.
+            ul = u.lower()
+            if "geoid=102134353" in ul:
                 return "TN"
-            if "geoId=105015875" in u:
+            if "geoid=105015875" in ul:
                 return "FR"
-            if "geoId=101282230" in u:
+            if "geoid=101282230" in ul:
                 # Dashboard uses GR label for Germany.
                 return "GR"
+            if "location=middle%20east" in ul or "region=me" in ul:
+                return "ME"
             return "LI"
 
         all_jobs = []
@@ -294,7 +297,7 @@ def main() -> int:
                 return 2
 
             # New rule: for Germany (GR), drop jobs whose title is not English (heuristic).
-            if label == "GR":
+            if label in {"GR", "ME"}:
                 jobs = [j for j in jobs if is_english_title(j.title)]
 
             # Store per-geo source in SQLite (e.g. 'linkedin TN') so history matches Sheets.
